@@ -1,0 +1,96 @@
+Description:
+  Build a branch of KeyDB
+Parameters:
+  KeyPairName:
+    Description: Amazon EC2 Key Pair
+    Type: "AWS::EC2::KeyPair::KeyName"
+Resources:
+  IGW:
+    Type: AWS::EC2::InternetGateway
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPC
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+  PublicSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH from all
+      GroupName: PublicSSH
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow Public SSH
+          IpProtocol: TCP
+          FromPort: 22
+          ToPort: 22
+      VpcId: !Ref VPC
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  Routes:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+      RouteTableId: !Ref RouteTable
+  RouteAssn:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref Subnet
+  BuilderInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: "ami-078278691222aee06"
+      InstanceType: c6g.4xlarge
+      KeyName: !Ref KeyPairName
+      SubnetId: !Ref Subnet
+      SecurityGroupIds:
+        - !Ref PublicSG
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 50
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash -xe
+          sudo apt-get update
+          sudo apt install -y git build-essential nasm autotools-dev autoconf libjemalloc-dev tcl tcl-dev uuid-dev libcurl4-openssl-dev libbz2-dev libzstd-dev liblz4-dev libsnappy-dev libssl-dev
+          sudo apt install -y pkg-config docker.io
+          cd /home/ubuntu
+          git clone --depth 1 https://github.com/Snapchat/KeyDB.git
+          cd KeyDB
+          git submodule init && git submodule update
+          time make -j16 BUILD_TLS=yes
+          cd ..
+          mkdir app
+          cp KeyDB/src/keydb-server ./app
+          docker build -t keydb:main .
+          rm -rf ./app
+          
+          git clone --depth 1 --branch isb https://github.com/AGSaidi/KeyDB.git KeyDBISB
+          cd KeyDBISB
+          git submodule init && git submodule update
+          time make -j16 BUILD_TLS=yes
+          cd ..
+          mkdir app
+          cp KeyDB/src/keydb-server ./app
+          docker build -t keydb:isb .
+
+
+Outputs:
+  PublicIP:
+    Value: !GetAtt BuilderInstance.PublicIp
+  PublicDNS:
+    Value: !GetAtt BuilderInstance.PublicDnsName
